@@ -1,0 +1,115 @@
+#!/usr/bin/env ruby
+
+# Parse config file
+lines = File.readlines "#{ENV['HOME']}/.sift"
+buckets = {}
+has_child = {}
+
+cur = nil
+lines.each do |line|
+  line.chomp!
+  if line =~ /^\[([-\w]+)\]$/
+    cur = $1
+    next
+  end
+
+  # Skip whitespace
+  next if line =~ /^\s*$/
+
+  # Skip comments
+  next if line =~ /^\s*#/
+
+  unless cur
+    abort "Need a category before any patterns on #{line.inspect}"
+  end
+
+  if buckets[line]
+    abort "Two entries for #{line.inspect}"
+  end
+
+  if line =~ /\/$/
+    line.gsub!( /\/$/, '' )
+    unless File.directory?(line)
+      abort "Not a directory: #{line.inspect}"
+    end
+  end
+
+  unless File.exists?(line)
+    abort "No such file: #{line.inspect}"
+  end
+
+  buckets[line] = cur
+
+  parts = line.split('/')
+  parts.size.times do |i|
+    path = parts[0..i].join '/'
+    has_child[path] = true
+  end
+end
+
+# TODO Skip other filesystems
+@buckets = buckets
+@has_child = has_child
+
+# Returns two arrays, the handled and the unhandled, as deep as necessary to
+# fully cover everything
+def build_list path=nil
+  handled = []
+  unhandled = []
+  Dir.entries( path || '.' ).sort.each do |file|
+    if path
+      full = "#{path}/#{file}"
+    else
+      full = file
+    end
+
+    next if file == '.'
+    next if file == '..'
+
+    if @buckets[full]
+      handled << full
+      next
+    end
+
+    unless File.directory?(full)
+      unhandled << full
+      next
+    end
+
+    unless @has_child[full]
+      unhandled << full
+      next
+    end
+
+    yes, no = build_list full
+
+    if yes.empty? && no.empty?
+      # empty directory, skip
+    elsif yes.empty?
+      # No matches, just add parent
+      unhandled << full
+    elsif no.empty?
+      # All matches, add all children to matches list
+      handled += yes
+    else
+      # A mixture, add to respective lists
+      handled += yes
+      unhandled += no
+    end
+  end
+
+  return handled, unhandled
+end
+
+yes, no = build_list
+
+# List unhandled files
+if no.empty?
+  exit 0
+end
+
+no.each do |path|
+  puts path
+end
+
+exit 1
